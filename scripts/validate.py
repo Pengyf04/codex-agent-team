@@ -29,7 +29,7 @@ IGNORED_SCAN_PARTS = {
 
 
 def check(condition: bool, message: str) -> None:
-    symbol = "✓" if condition else "✗"
+    symbol = "[OK]" if condition else "[FAIL]"
     print(f"  {symbol} {message}")
     if not condition:
         ERRORS.append(message)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import runpy
 import subprocess
@@ -82,6 +83,21 @@ class AgentTeamPackageTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("guard", completed.stdout)
         self.assertIn("request", completed.stdout)
+
+    def test_repository_validator_supports_cp1252_console(self) -> None:
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "cp1252"
+        completed = subprocess.run(  # nosec B603
+            [sys.executable, str(ROOT / "scripts" / "validate.py")],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("[OK] plugin name is codex-agent-team", completed.stdout)
 
     def test_install_digest_ignores_transient_python_bytecode(self) -> None:
         namespace = runpy.run_path(str(SMOKE_PATH))

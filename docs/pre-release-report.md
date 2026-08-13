@@ -29,7 +29,7 @@ was authorized, but a version tag and GitHub Release were not authorized**.
 
 - Repository validator: 33 public files passed after the security workflows were
   added.
-- Standard regression suite: 89 tests passed; the suite was exercised on Python
+- Standard regression suite: 90 tests passed; the suite was exercised on Python
   3.10, 3.12, and 3.14 during local validation.
 - Ruff check and format, Mypy strict, and Bandit passed.
 - The OpenAI Skill and Plugin validators passed.
