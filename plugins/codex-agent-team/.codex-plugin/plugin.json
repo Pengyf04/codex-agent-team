@@ -1,0 +1,36 @@
+{
+  "name": "codex-agent-team",
+  "version": "0.1.0",
+  "description": "Durable four-role multi-agent orchestration for complex Codex tasks.",
+  "author": {
+    "name": "Pengyf04",
+    "url": "https://github.com/Pengyf04"
+  },
+  "homepage": "https://github.com/Pengyf04/codex-agent-team",
+  "repository": "https://github.com/Pengyf04/codex-agent-team",
+  "license": "MIT",
+  "keywords": [
+    "agent",
+    "multi-agent",
+    "orchestration",
+    "planning",
+    "verification"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Team",
+    "shortDescription": "Plan, review, execute, and verify with specialized Codex agents.",
+    "longDescription": "Run complex tasks through Planner, Plan Reviewer, Executor, and Verifier roles with durable handoffs, bounded loops, risk reporting, and two human approval checkpoints.",
+    "developerName": "Pengyf04",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/Pengyf04/codex-agent-team",
+    "privacyPolicyURL": "https://github.com/Pengyf04/codex-agent-team/blob/main/docs/security-and-privacy.md",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use Agent Team to plan, implement, and verify this complex task."
+    ]
+  }
+}

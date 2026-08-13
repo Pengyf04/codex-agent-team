@@ -1,0 +1,6 @@
+interface:
+  display_name: "Agent Team"
+  short_description: "四角色多智能体完成复杂任务的规划、执行、验证与人工确认编排"
+  default_prompt: "使用 $agent-team 规划、执行并验证这个复杂任务。"
+policy:
+  allow_implicit_invocation: false

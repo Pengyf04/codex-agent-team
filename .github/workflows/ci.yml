@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+            label: ubuntu-py310
+          - os: ubuntu-latest
+            python-version: "3.12"
+            label: ubuntu-py312
+          - os: ubuntu-latest
+            python-version: "3.14"
+            label: ubuntu-py314
+          - os: macos-latest
+            python-version: "3.12"
+            label: macos-py312
+          - os: windows-latest
+            python-version: "3.12"
+            label: windows-py312-experimental
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate repository, package inventory, and public-data hygiene
+        run: python scripts/validate.py
+      - name: Run standard regression suite
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -v
+
+  official-validators:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install validator dependency
+        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      - name: Download pinned OpenAI validators
+        env:
+          OPENAI_CODEX_REVISION: 2cc9dbb9846b2dc03948414df6712adb967c70eb
+        run: |
+          curl --fail --silent --show-error --location \
+            "https://raw.githubusercontent.com/openai/codex/${OPENAI_CODEX_REVISION}/codex-rs/skills/src/assets/samples/skill-creator/scripts/quick_validate.py" \
+            --output /tmp/codex-quick-validate.py
+          curl --fail --silent --show-error --location \
+            "https://raw.githubusercontent.com/openai/codex/${OPENAI_CODEX_REVISION}/codex-rs/skills/src/assets/samples/plugin-creator/scripts/validate_plugin.py" \
+            --output /tmp/codex-validate-plugin.py
+      - name: Run official Skill validator
+        run: python3 -X utf8 /tmp/codex-quick-validate.py plugins/codex-agent-team/skills/agent-team
+      - name: Run official Plugin validator
+        run: python3 -X utf8 /tmp/codex-validate-plugin.py plugins/codex-agent-team
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reject vulnerable dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned development tools
+        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Lint and format check
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Type check
+        run: >-
+          mypy --strict
+          plugins/codex-agent-team/skills/agent-team/scripts/state.py
+          scripts/validate.py tests
+      - name: Security scan
+        run: bandit -q -r plugins/codex-agent-team/skills/agent-team/scripts scripts

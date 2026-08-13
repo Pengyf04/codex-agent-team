@@ -1,0 +1,20 @@
+{
+  "name": "codex-agent-team",
+  "interface": {
+    "displayName": "Codex Agent Team"
+  },
+  "plugins": [
+    {
+      "name": "codex-agent-team",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-agent-team"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

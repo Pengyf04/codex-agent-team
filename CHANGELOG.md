@@ -1,0 +1,17 @@
+# Changelog
+
+All notable public changes are recorded here. This project follows Semantic Versioning.
+
+## [0.1.0] - 2026-08-13
+
+### Added
+
+- Repository Marketplace and installable Codex Plugin containing the `$agent-team` Skill.
+- Durable Planner, Plan Reviewer, Executor, Verifier, and Planner Final workflow with two human approval checkpoints.
+- Evidence-gated state transitions, bounded planning and verification loops, resumable local run records, and two delivery modes.
+- Mandatory persistence of acceptance-critical ad hoc tests before `PASS` or risk closure.
+- Auditable risk lifecycle, Executor iteration counters, and explicit `DONE` completion scope.
+- POSIX-private control data permissions and refusal to run when `.agent-team/` is tracked by Git.
+- English and Chinese user documentation, public security guidance, release checks, and cross-platform CI.
+
+[0.1.0]: https://github.com/Pengyf04/codex-agent-team/releases/tag/v0.1.0
