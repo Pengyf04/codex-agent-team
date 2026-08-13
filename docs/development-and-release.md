@@ -26,7 +26,8 @@ For local iteration, use Codex's bundled `plugin-creator` cachebuster helper ins
 3. OpenAI Skill and Plugin validators pinned to the revision recorded in CI.
 4. Ruff, Mypy strict, and Bandit.
 5. Clean-room local Marketplace add/install/installed-state update/remove/reinstall checks: `python3 scripts/smoke_local_install.py`.
-6. A new-task forward test that exercises both human checkpoints and at least one repair path.
+6. Public Git source install and upgrade checks after publication: `python3 scripts/smoke_local_install.py --marketplace-source Pengyf04/codex-agent-team --exercise-upgrade`.
+7. A new-task forward test that exercises both human checkpoints and at least one repair path.
 
 Passing a narrower layer is not evidence for a broader release claim.
 

@@ -177,6 +177,9 @@ V1 明确拒绝 `user_path`、`worktree` 和非空 `output_path`；`staged` 产�
 python3 scripts/validate.py
 python3 -m unittest discover -s tests -v
 python3 scripts/smoke_local_install.py
+python3 scripts/smoke_local_install.py \
+  --marketplace-source Pengyf04/codex-agent-team \
+  --exercise-upgrade
 ```
 
 CI 会在 Ubuntu Python 3.10/3.12/3.14 以及 macOS、Windows Python 3.12 上运行回归测试，并额外执行固定版本的 OpenAI Skill/Plugin 校验器、Ruff、Mypy strict、Bandit、CodeQL、Pull Request 依赖审查、包清单和秘密/PII 检查。开发依赖固定在 [requirements-dev.txt](requirements-dev.txt)。

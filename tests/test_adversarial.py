@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import subprocess
@@ -548,6 +549,33 @@ class AgentTeamAdversarialTests(unittest.TestCase):
         risk_log = (run_dir / "risk-log.md").read_text(encoding="utf-8")
         self.assertEqual(len(current["risks"]), 40)
         self.assertEqual(risk_log.count("\n## "), 40)
+
+    def test_windows_file_lock_retries_deadlock_errors(self) -> None:
+        class FakeMsvcrt:
+            LK_NBLCK = 1
+            LK_UNLCK = 2
+            lock_attempts = 0
+            unlock_attempts = 0
+
+            @classmethod
+            def locking(cls, _fd: int, mode: int, _length: int) -> None:
+                if mode == cls.LK_UNLCK:
+                    cls.unlock_attempts += 1
+                    return
+                cls.lock_attempts += 1
+                if cls.lock_attempts < 3:
+                    raise OSError(errno.EDEADLK, "lock is busy")
+
+        lock_path = self.root / "windows.lock"
+        with (
+            mock.patch.object(state, "fcntl", None),
+            mock.patch.object(state, "msvcrt", FakeMsvcrt, create=True),
+            state.exclusive_file_lock(lock_path, "test lock"),
+        ):
+            self.assertTrue(lock_path.is_file())
+
+        self.assertEqual(FakeMsvcrt.lock_attempts, 3)
+        self.assertEqual(FakeMsvcrt.unlock_attempts, 1)
 
     def test_critical_ad_hoc_test_cannot_close_a_risk(self) -> None:
         run_dir = self.initialize()

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 
 # Invokes the resolved local Codex executable without a shell.
@@ -67,6 +68,42 @@ def package_digest(root: Path) -> dict[str, str]:
     return files
 
 
+def marketplace_source_digest(source: str, temporary_root: Path) -> dict[str, str]:
+    local_root = Path(source).expanduser()
+    if local_root.is_dir():
+        plugin = local_root.resolve(strict=True) / "plugins" / "codex-agent-team"
+        require(plugin.is_dir(), f"local Marketplace Plugin is missing: {plugin}")
+        return package_digest(plugin)
+
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", source):
+        raise SmokeError("GitHub Marketplace source must use owner/repository")
+    git = shutil.which("git")
+    if git is None:
+        raise SmokeError("Git is required for public Marketplace parity checks")
+    clone_root = temporary_root / "public-source"
+    completed = subprocess.run(  # nosec B603
+        [
+            git,
+            "clone",
+            "--quiet",
+            "--depth",
+            "1",
+            f"https://github.com/{source}.git",
+            str(clone_root),
+        ],
+        cwd=temporary_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=90,
+    )
+    if completed.returncode != 0:
+        raise SmokeError(f"could not clone public Marketplace source: {source}")
+    plugin = clone_root / "plugins" / "codex-agent-team"
+    require(plugin.is_dir(), "public Marketplace Plugin is missing")
+    return package_digest(plugin)
+
+
 def find_plugin(items: Any, *, installed: bool) -> dict[str, Any]:
     if not isinstance(items, list):
         raise SmokeError("plugin list JSON has an invalid collection")
@@ -109,13 +146,41 @@ def validate_installed_plugin(
     require(item.get("enabled") is True, f"{attempt} is not enabled")
 
 
+def validate_marketplace_upgrade(codex: Path, env: dict[str, str]) -> None:
+    upgraded = run_json(
+        codex,
+        env,
+        "plugin",
+        "marketplace",
+        "upgrade",
+        "codex-agent-team",
+        "--json",
+    )
+    errors = upgraded.get("errors")
+    selected = upgraded.get("selectedMarketplaces")
+    upgraded_roots = upgraded.get("upgradedRoots")
+    require(errors == [], "Marketplace upgrade reported an error")
+    require(
+        isinstance(selected, list) and "codex-agent-team" in selected,
+        "Marketplace upgrade did not select codex-agent-team",
+    )
+    require(
+        isinstance(upgraded_roots, list) and bool(upgraded_roots),
+        "Marketplace upgrade did not update a Git source",
+    )
+
+
 def exercise_plugin_lifecycle(
     codex: Path,
     env: dict[str, str],
     codex_home: Path,
     source_digest: dict[str, str],
+    *,
+    exercise_upgrade: bool = False,
 ) -> None:
     validate_installed_plugin(codex, env, codex_home, source_digest, "install")
+    if exercise_upgrade:
+        validate_marketplace_upgrade(codex, env)
     validate_installed_plugin(
         codex, env, codex_home, source_digest, "installed-state update"
     )
@@ -135,6 +200,16 @@ def parse_args() -> argparse.Namespace:
         default="codex",
         help="Codex executable name or path (default: codex)",
     )
+    parser.add_argument(
+        "--marketplace-source",
+        default=str(ROOT),
+        help="Marketplace source path or GitHub owner/repo (default: repository root)",
+    )
+    parser.add_argument(
+        "--exercise-upgrade",
+        action="store_true",
+        help="Exercise Git Marketplace upgrade before the installed-state add",
+    )
     return parser.parse_args()
 
 
@@ -146,10 +221,12 @@ def main() -> int:
         raise SmokeError(f"Codex executable not found: {codex_value}")
     codex = Path(codex_path).resolve(strict=True)
     require(SOURCE_PLUGIN.is_dir(), f"source Plugin is missing: {SOURCE_PLUGIN}")
-    source_digest = package_digest(SOURCE_PLUGIN)
 
     with tempfile.TemporaryDirectory(prefix="codex-agent-team-smoke-") as temporary:
         isolated_home = Path(temporary)
+        source_digest = marketplace_source_digest(
+            str(args.marketplace_source), isolated_home
+        )
         codex_home = isolated_home / ".codex"
         codex_home.mkdir(mode=0o700)
         env = os.environ.copy()
@@ -160,7 +237,13 @@ def main() -> int:
         require(initial.get("marketplaces") == [], "isolated Codex home is not empty")
 
         added_marketplace = run_json(
-            codex, env, "plugin", "marketplace", "add", str(ROOT), "--json"
+            codex,
+            env,
+            "plugin",
+            "marketplace",
+            "add",
+            str(args.marketplace_source),
+            "--json",
         )
         require(
             added_marketplace.get("marketplaceName") == "codex-agent-team",
@@ -170,7 +253,13 @@ def main() -> int:
         available = run_json(codex, env, "plugin", "list", "--available", "--json")
         find_plugin(available.get("available"), installed=False)
 
-        exercise_plugin_lifecycle(codex, env, codex_home, source_digest)
+        exercise_plugin_lifecycle(
+            codex,
+            env,
+            codex_home,
+            source_digest,
+            exercise_upgrade=bool(args.exercise_upgrade),
+        )
 
         removed_marketplace = run_json(
             codex,
@@ -189,7 +278,8 @@ def main() -> int:
         require(final.get("marketplaces") == [], "Marketplace remained after removal")
 
     print(
-        "PASS: isolated Marketplace discovery, install, installed-state update, "
+        "PASS: isolated Marketplace discovery, install, "
+        f"{'Git upgrade, ' if args.exercise_upgrade else ''}installed-state update, "
         "cache parity, removal, reinstall, and cleanup"
     )
     return 0

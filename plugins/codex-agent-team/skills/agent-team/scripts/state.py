@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -15,6 +16,7 @@ import shutil
 import subprocess  # nosec B404
 import sys
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -37,6 +39,8 @@ REQUEST_FILE = "request.json"
 REQUEST_LOCK_FILE = ".request.lock"
 LOCK_FILE = ".state.lock"
 INIT_TEMP_PREFIX = ".init-"
+WINDOWS_LOCK_RETRY_SECONDS = 0.01
+WINDOWS_LOCK_TIMEOUT_SECONDS = 30.0
 
 INITIALIZED = "INITIALIZED"
 PLANNING = "PLANNING"
@@ -686,6 +690,23 @@ def validate_run_path(run_dir: str | Path, *, require_state: bool) -> tuple[Path
     return lexical, real
 
 
+def acquire_windows_file_lock(handle: Any, label: str) -> None:
+    windows_lock_api = cast(Any, msvcrt)
+    deadline = time.monotonic() + WINDOWS_LOCK_TIMEOUT_SECONDS
+    retryable_errors = {errno.EACCES, errno.EDEADLK}
+    while True:
+        handle.seek(0)
+        try:
+            windows_lock_api.locking(handle.fileno(), windows_lock_api.LK_NBLCK, 1)
+            return
+        except OSError as exc:
+            if exc.errno not in retryable_errors:
+                raise
+            if time.monotonic() >= deadline:
+                raise StateError(f"timed out while acquiring {label}") from exc
+            time.sleep(WINDOWS_LOCK_RETRY_SECONDS)
+
+
 @contextmanager
 def exclusive_file_lock(lock_path: Path, label: str) -> Iterator[None]:
     if lock_path.is_symlink():
@@ -706,7 +727,7 @@ def exclusive_file_lock(lock_path: Path, label: str) -> Iterator[None]:
             if handle.tell() == 0:
                 handle.write(b"0")
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            acquire_windows_file_lock(handle, label)
         try:
             yield
         finally:

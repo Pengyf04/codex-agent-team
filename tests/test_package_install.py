@@ -146,6 +146,23 @@ class AgentTeamPackageTests(unittest.TestCase):
 
             self.assertEqual(package_digest(package), before)
 
+    def test_smoke_resolves_digest_from_selected_local_marketplace(self) -> None:
+        namespace = runpy.run_path(str(SMOKE_PATH))
+        marketplace_source_digest = cast(
+            Callable[[str, Path], dict[str, str]],
+            namespace["marketplace_source_digest"],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            plugin = root / "marketplace" / "plugins" / "codex-agent-team"
+            plugin.mkdir(parents=True)
+            (plugin / "manifest.txt").write_text("public\n", encoding="utf-8")
+
+            digest = marketplace_source_digest(str(root / "marketplace"), root)
+
+        self.assertEqual(set(digest), {"manifest.txt"})
+
     def test_smoke_covers_installed_state_update_before_reinstall(self) -> None:
         spec = importlib.util.spec_from_file_location("smoke_local_install", SMOKE_PATH)
         self.assertIsNotNone(spec)
@@ -184,6 +201,18 @@ class AgentTeamPackageTests(unittest.TestCase):
                             }
                         ]
                     }
+                if args == (
+                    "plugin",
+                    "marketplace",
+                    "upgrade",
+                    "codex-agent-team",
+                    "--json",
+                ):
+                    return {
+                        "errors": [],
+                        "selectedMarketplaces": ["codex-agent-team"],
+                        "upgradedRoots": ["git-source"],
+                    }
                 if args == ("plugin", "remove", module.PLUGIN_ID, "--json"):
                     return {"pluginId": module.PLUGIN_ID}
                 self.fail(f"unexpected smoke command: {args}")
@@ -192,16 +221,30 @@ class AgentTeamPackageTests(unittest.TestCase):
             module.run_json = fake_run_json
             try:
                 module.exercise_plugin_lifecycle(
-                    Path("/fake/codex"), {}, codex_home, source_digest
+                    Path("/fake/codex"),
+                    {},
+                    codex_home,
+                    source_digest,
+                    exercise_upgrade=True,
                 )
             finally:
                 module.run_json = original_run_json
 
         add = ("plugin", "add", module.PLUGIN_ID, "--json")
         remove = ("plugin", "remove", module.PLUGIN_ID, "--json")
+        upgrade = (
+            "plugin",
+            "marketplace",
+            "upgrade",
+            "codex-agent-team",
+            "--json",
+        )
         self.assertEqual(calls.count(add), 3)
         self.assertEqual(calls.count(remove), 2)
-        self.assertLess(calls.index(add, calls.index(add) + 1), calls.index(remove))
+        first_update = calls.index(add, calls.index(add) + 1)
+        self.assertEqual(calls.count(upgrade), 1)
+        self.assertLess(calls.index(upgrade), first_update)
+        self.assertLess(first_update, calls.index(remove))
 
     def test_public_docs_and_ignore_rules_cover_install_lifecycle(self) -> None:
         for relative in (

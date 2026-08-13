@@ -177,6 +177,9 @@ Run the repository checks:
 python3 scripts/validate.py
 python3 -m unittest discover -s tests -v
 python3 scripts/smoke_local_install.py
+python3 scripts/smoke_local_install.py \
+  --marketplace-source Pengyf04/codex-agent-team \
+  --exercise-upgrade
 ```
 
 CI runs the regression suite on Ubuntu 3.10/3.12/3.14 plus macOS and Windows 3.12. It also runs pinned OpenAI Skill/Plugin validators, Ruff, Mypy strict, Bandit, CodeQL, pull-request dependency review, package inventory checks, and secret/PII checks. Development dependencies are pinned in [requirements-dev.txt](requirements-dev.txt).
