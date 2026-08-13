@@ -382,15 +382,15 @@ check(
 )
 check(
     not secret_hits,
-    f"no secrets, PII, or host paths ({', '.join(secret_hits) or 'none'})",
+    f"no secrets, PII, or host paths ({len(secret_hits)} finding(s))",
 )
 check(
     not email_hits,
-    f"no public personal email addresses ({', '.join(email_hits) or 'none'})",
+    f"no public personal email addresses ({len(email_hits)} finding(s))",
 )
 check(
     not sensitive_file_hits,
-    f"no sensitive credential files ({', '.join(sensitive_file_hits) or 'none'})",
+    f"no sensitive credential files ({len(sensitive_file_hits)} finding(s))",
 )
 check(
     not symlink_hits,

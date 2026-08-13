@@ -5,6 +5,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,34 @@ class AgentTeamPackageTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("[OK] plugin name is codex-agent-team", completed.stdout)
+
+    def test_repository_validator_does_not_echo_sensitive_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            copied_root = Path(temporary) / "candidate"
+            shutil.copytree(
+                ROOT,
+                copied_root,
+                ignore=shutil.ignore_patterns(
+                    ".git", ".venv", ".mypy_cache", ".ruff_cache", "__pycache__"
+                ),
+            )
+            secret_name = "private-credentials.txt"
+            fake_token = "ghp_" + "A" * 36
+            (copied_root / secret_name).write_text(fake_token, encoding="utf-8")
+
+            completed = subprocess.run(  # nosec B603
+                [sys.executable, str(copied_root / "scripts" / "validate.py")],
+                cwd=copied_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        output = completed.stdout + completed.stderr
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertNotIn(secret_name, output)
+        self.assertNotIn(fake_token, output)
+        self.assertIn("no secrets, PII, or host paths (1 finding(s))", output)
 
     def test_install_digest_ignores_transient_python_bytecode(self) -> None:
         namespace = runpy.run_path(str(SMOKE_PATH))
