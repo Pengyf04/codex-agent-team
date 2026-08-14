@@ -275,6 +275,18 @@ class AgentTeamPackageTests(unittest.TestCase):
             self.assertIn(command, chinese)
         self.assertIn("Windows | Experimental", english)
         self.assertIn("Windows | 实验性", chinese)
+        for phrase in (
+            "[PRE-INIT ACCEPTANCE CONFIRMATION]",
+            "prepare_final",
+            "canonical absolute output path",
+        ):
+            self.assertIn(phrase, english)
+        for phrase in (
+            "[PRE-INIT ACCEPTANCE CONFIRMATION]",
+            "prepare_final",
+            "canonical 绝对输出路径",
+        ):
+            self.assertIn(phrase, chinese)
 
         ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         for pattern in (".agent-team/", ".mypy_cache/", ".ruff_cache/", ".env"):

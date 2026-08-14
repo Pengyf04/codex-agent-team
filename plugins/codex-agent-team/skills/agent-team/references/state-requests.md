@@ -114,16 +114,13 @@ Checkpoint decision:
 }
 ```
 
-Final approval requires the exact scope shown to and approved by the user:
+Before showing checkpoint B, preflight and bind the proposed scope to the current final evidence:
 
 ```json
 {
   "request_id": "req-0123456789abcdef0123456789abcdef",
-  "command": "confirm",
+  "command": "prepare_final",
   "run_id": "20260811-120000-short-task-name",
-  "checkpoint": "final",
-  "decision": "approve",
-  "detail": "The user's exact final approval.",
   "completion_scope": {
     "summary": "Implemented and independently verified the approved workspace change.",
     "completed": ["Product change", "Formal regression tests"],
@@ -133,7 +130,22 @@ Final approval requires the exact scope shown to and approved by the user:
 }
 ```
 
-Allowed deployment statuses are `not_applicable`, `local_only`, `not_deployed`, and `deployed`. Both `completed` and `excluded` must be non-empty; use an explicit `none` item rather than omitting exclusions. The state machine derives delivery paths, open risk IDs, and evidence hashes instead of trusting request input.
+Allowed deployment statuses are `not_applicable`, `local_only`, `not_deployed`, and `deployed`. Both `completed` and `excluded` must be non-empty; use an explicit `none` item rather than omitting exclusions. Unknown or misspelled keys are rejected. Ask for approval only after this request succeeds, and display the exact returned `prepared_completion_scope.scope`, `scope_sha256`, `canonical_output_path`, and named `evidence_hashes`.
+
+After the user approves that exact prepared scope, confirm without resending or rebuilding it:
+
+```json
+{
+  "request_id": "req-0123456789abcdef0123456789abcdef",
+  "command": "confirm",
+  "run_id": "20260811-120000-short-task-name",
+  "checkpoint": "final",
+  "decision": "approve",
+  "detail": "The user's exact final approval."
+}
+```
+
+The state machine consumes the prepared scope and derives delivery paths, non-closed risk IDs, and evidence hashes instead of trusting approval-time input. If delivery or final evidence changed after preparation, the prepared scope is cleared and the run returns to the safe revision cycle.
 
 Other operations:
 
@@ -178,3 +190,5 @@ Every active state summary contains an `expected` object:
 ```
 
 Dispatch only this role. Its non-`BLOCKED` result is accepted only when the named artifact is fresh, append-only where required, contains exactly one `Decision: <MARKER>` immediately before the exact final token, and any non-null `subject` snapshot is unchanged. A rejected request is a protocol error: retry the retained request unchanged first so an already committed `request_id` can be recognized; then inspect state with a new `show` request and reconcile. Never edit `state.json`.
+
+Every summary also returns `canonical_output_path` as an absolute path and three explicitly named hashes under `evidence_hashes`: approved plan, verified delivery plus reports, and final review plus risk log. At checkpoint B, `prepared_completion_scope` contains the normalized scope and its binding hash; at `DONE`, that preview is cleared and the approved value appears under `completion_scope`.
