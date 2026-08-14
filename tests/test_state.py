@@ -147,6 +147,12 @@ class AgentTeamStateTests(unittest.TestCase):
             "deployment_status": "not_deployed",
         }
 
+    def prepare_and_confirm_final(self, run_dir: Path) -> dict[str, Any]:
+        state.prepare_final_scope(run_dir, self.completion_scope())
+        return cast(
+            dict[str, Any], state.confirm_checkpoint(run_dir, "final", "approve")
+        )
+
     def evidence_record(
         self,
         evidence_id: str,
@@ -170,6 +176,7 @@ class AgentTeamStateTests(unittest.TestCase):
         run_dir = self.initialize()
         current = state.load_state(run_dir)
 
+        self.assertEqual(current["schema_version"], 6)
         self.assertEqual(current["status"], state.INITIALIZED)
         self.assertEqual(current["delivery"]["mode"], "workspace")
         self.assertEqual(
@@ -214,9 +221,7 @@ class AgentTeamStateTests(unittest.TestCase):
         self.apply_marker(run_dir, "EXECUTION_DONE")
         self.apply_marker(run_dir, "PASS")
         self.apply_marker(run_dir, "FINAL_ACCEPT")
-        final = state.confirm_checkpoint(
-            run_dir, "final", "approve", completion_scope=self.completion_scope()
-        )
+        final = self.prepare_and_confirm_final(run_dir)
 
         self.assertEqual(final["status"], state.DONE)
         self.assertEqual(final["planning_round"], 1)
@@ -347,19 +352,86 @@ class AgentTeamStateTests(unittest.TestCase):
         self.apply_marker(run_dir, "PASS")
         self.apply_marker(run_dir, "FINAL_ACCEPT")
 
-        with self.assertRaisesRegex(state.StateError, "completion_scope"):
+        with self.assertRaisesRegex(state.StateError, "prepared completion scope"):
             state.confirm_checkpoint(run_dir, "final", "approve")
         self.assertEqual(
             state.load_state(run_dir)["status"], state.AWAITING_FINAL_APPROVAL
         )
-        completed = state.confirm_checkpoint(
-            run_dir, "final", "approve", completion_scope=self.completion_scope()
+        prepared = state.prepare_final_scope(run_dir, self.completion_scope())
+        self.assertEqual(
+            prepared["prepared_completion_scope"]["scope"], self.completion_scope()
         )
+        completed = state.confirm_checkpoint(run_dir, "final", "approve")
 
         self.assertEqual(completed["status"], state.DONE)
+        self.assertIsNone(completed["prepared_completion_scope"])
         self.assertEqual(completed["completion_scope"]["delivery_mode"], "workspace")
         self.assertEqual(
             completed["completion_scope"]["excluded"], ["Production deployment"]
+        )
+
+    def test_final_scope_is_preflighted_before_human_approval(self) -> None:
+        run_dir = self.initialize(mode="staged")
+        self.advance_to_execution(run_dir)
+        self.apply_marker(run_dir, "EXECUTION_DONE")
+        self.apply_marker(run_dir, "PASS")
+        self.apply_marker(run_dir, "FINAL_ACCEPT")
+        invalid = self.completion_scope()
+        invalid["exclusions"] = invalid.pop("excluded")
+
+        with self.assertRaisesRegex(state.StateError, "complete completion_scope"):
+            state.prepare_final_scope(run_dir, invalid)
+        unchanged = state.load_state(run_dir)
+        self.assertEqual(unchanged["status"], state.AWAITING_FINAL_APPROVAL)
+        self.assertIsNone(unchanged["prepared_completion_scope"])
+
+        valid = self.completion_scope()
+        valid["summary"] = f"  {valid['summary']}  "
+        prepared = state.prepare_final_scope(run_dir, valid)
+        summary = state.state_summary(prepared)
+        preview = summary["prepared_completion_scope"]
+        self.assertEqual(preview["scope"], self.completion_scope())
+        self.assertEqual(
+            summary["canonical_output_path"],
+            str((run_dir / "deliverable").resolve()),
+        )
+        self.assertIsNotNone(summary["evidence_hashes"]["approved_plan_sha256"])
+        self.assertIsNotNone(
+            summary["evidence_hashes"]["verified_delivery_and_reports_sha256"]
+        )
+        self.assertEqual(
+            summary["evidence_hashes"]["final_review_and_risk_log_sha256"],
+            preview["final_subject_sha256"],
+        )
+
+    def test_final_scope_can_be_reprepared_before_approval(self) -> None:
+        run_dir = self.initialize()
+        self.advance_to_execution(run_dir)
+        self.apply_marker(run_dir, "EXECUTION_DONE")
+        self.apply_marker(run_dir, "PASS")
+        self.apply_marker(run_dir, "FINAL_ACCEPT")
+        first = state.prepare_final_scope(run_dir, self.completion_scope())
+        first_digest = first["prepared_completion_scope"]["scope_sha256"]
+        revised_scope = self.completion_scope()
+        revised_scope["summary"] = "User-visible completion wording was revised."
+
+        revised = state.prepare_final_scope(run_dir, revised_scope)
+        self.assertNotEqual(
+            revised["prepared_completion_scope"]["scope_sha256"], first_digest
+        )
+        completed = state.confirm_checkpoint(run_dir, "final", "approve")
+
+        self.assertEqual(completed["status"], state.DONE)
+        self.assertEqual(
+            completed["completion_scope"]["summary"], revised_scope["summary"]
+        )
+        self.assertEqual(
+            [
+                item["event"]
+                for item in completed["history"]
+                if item["event"] == "PREPARE_FINAL_SCOPE"
+            ],
+            ["PREPARE_FINAL_SCOPE", "PREPARE_FINAL_SCOPE"],
         )
 
     def test_planning_limit_blocks_fifth_unresolved_review(self) -> None:
@@ -432,6 +504,28 @@ class AgentTeamStateTests(unittest.TestCase):
         self.assertIn(
             "Browser validation unavailable", (run_dir / "risk-log.md").read_text()
         )
+
+    def test_prepared_scope_survives_explicit_block_and_resume(self) -> None:
+        run_dir = self.initialize()
+        self.advance_to_execution(run_dir)
+        self.apply_marker(run_dir, "EXECUTION_DONE")
+        self.apply_marker(run_dir, "PASS")
+        self.apply_marker(run_dir, "FINAL_ACCEPT")
+        prepared = state.prepare_final_scope(run_dir, self.completion_scope())
+        expected_hash = prepared["prepared_completion_scope"]["final_subject_sha256"]
+
+        blocked = state.block_run(run_dir, "waiting for explicit user approval")
+        blocked_summary = state.state_summary(blocked)
+        self.assertEqual(
+            blocked_summary["evidence_hashes"]["final_review_and_risk_log_sha256"],
+            expected_hash,
+        )
+        resumed = state.resume_run(
+            run_dir, state.AWAITING_FINAL_APPROVAL, "user returned to checkpoint B"
+        )
+        self.assertIsNotNone(resumed["prepared_completion_scope"])
+        completed = state.confirm_checkpoint(run_dir, "final", "approve")
+        self.assertEqual(completed["status"], state.DONE)
 
     def test_blocked_run_requires_explicit_resume_reason(self) -> None:
         run_dir = self.initialize()

@@ -182,6 +182,18 @@ check(
 )
 check("risk_update" in skill_text, "skill documents risk lifecycle updates")
 check("completion_scope" in skill_text, "skill requires explicit DONE scope")
+check(
+    "[PRE-INIT ACCEPTANCE CONFIRMATION]" in skill_text,
+    "skill distinguishes pre-initialization confirmation from checkpoints",
+)
+check(
+    "prepare_final" in skill_text and "without reconstructing" in skill_text,
+    "skill preflights and reuses the final completion scope",
+)
+check(
+    "canonical_output_path" in skill_text and "absolute" in skill_text,
+    "skill requires canonical absolute delivery paths",
+)
 check("tracked by Git" in skill_text, "skill refuses tracked control data")
 
 openai_yaml = (SKILL / "agents" / "openai.yaml").read_text(encoding="utf-8")
@@ -272,6 +284,18 @@ check(
     "state.py tracks Executor internal repairs",
 )
 check("completion_scope" in state_text, "state.py persists explicit DONE scope")
+check(
+    "SCHEMA_VERSION = 6" in state_text,
+    "state.py uses the prepared-scope schema version",
+)
+check(
+    "prepared_completion_scope" in state_text and '"prepare_final"' in state_text,
+    "state.py preflights and binds checkpoint-B scope",
+)
+check(
+    "canonical_output_path" in state_text and "evidence_hashes" in state_text,
+    "state.py summarizes canonical output and named evidence hashes",
+)
 check(
     "PRIVATE_DIRECTORY_MODE = 0o700" in state_text
     and "PRIVATE_FILE_MODE = 0o600" in state_text,

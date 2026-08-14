@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - Windows fallback
     import msvcrt
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 PLANNING_LIMIT = 5
 VERIFICATION_LIMIT = 8
 CONTROL_DIR = ".agent-team"
@@ -868,6 +868,42 @@ def validate_completion_input(value: Any) -> dict[str, Any]:
     }
 
 
+def validate_prepared_completion_scope(state: dict[str, Any], value: Any) -> None:
+    required = {
+        "prepared_at",
+        "scope",
+        "scope_sha256",
+        "final_subject_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise StateError("prepared completion scope is invalid")
+    scope = validate_completion_input(value["scope"])
+    if value["scope"] != scope:
+        raise StateError("prepared completion scope is not normalized")
+    if (
+        not isinstance(value["prepared_at"], str)
+        or not value["prepared_at"]
+        or value["scope_sha256"] != sha256_json(scope)
+        or not isinstance(value["final_subject_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", value["final_subject_sha256"])
+    ):
+        raise StateError("prepared completion scope has invalid evidence binding")
+
+    expected = state.get("expected") or {}
+    if state["status"] == AWAITING_FINAL_APPROVAL:
+        final_subject_value = expected.get("subject") or {}
+    elif (
+        state["status"] == BLOCKED
+        and (state.get("blocked") or {}).get("from") == AWAITING_FINAL_APPROVAL
+    ):
+        blocked_expected = (state.get("blocked") or {}).get("expected") or {}
+        final_subject_value = blocked_expected.get("subject") or {}
+    else:
+        raise StateError("prepared completion scope exists outside checkpoint B")
+    if value["final_subject_sha256"] != final_subject_value.get("sha256"):
+        raise StateError("prepared completion scope is bound to stale final evidence")
+
+
 def validate_stored_completion_scope(state: dict[str, Any], value: Any) -> None:
     required = {
         "completed_at",
@@ -958,6 +994,7 @@ def validate_state_shape(state: dict[str, Any]) -> None:
         "approved_plan_subject",
         "verified_subject",
         "executor_mode",
+        "prepared_completion_scope",
         "completion_scope",
         "created_at",
         "updated_at",
@@ -1082,6 +1119,9 @@ def validate_state_shape(state: dict[str, Any]) -> None:
             )
     elif state.get("blocked") is not None:
         raise StateError("non-blocked state contains blocked metadata")
+    prepared_completion = state["prepared_completion_scope"]
+    if prepared_completion is not None:
+        validate_prepared_completion_scope(state, prepared_completion)
     seen_risk_ids: set[str] = set()
     for index, item in enumerate(state["risks"]):
         if not isinstance(item, dict) or set(item) != {
@@ -1563,6 +1603,7 @@ def restart_planning(
     state["verification_round"] = 0
     state["approved_plan_subject"] = None
     state["verified_subject"] = None
+    state["prepared_completion_scope"] = None
     state["pending_test_persistence"] = []
     state["executor_mode"] = None
     set_status(state, PLANNING, event, detail)
@@ -1580,6 +1621,7 @@ def restart_verification(
     state["verification_cycle"] += 1
     state["verification_round"] = 0
     state["verified_subject"] = None
+    state["prepared_completion_scope"] = None
     set_status(state, EXECUTING, event, detail)
     schedule_executor(state, run_dir, "repair")
 
@@ -1859,6 +1901,7 @@ def initialize_run(
         "expected": None,
         "approved_plan_subject": None,
         "verified_subject": None,
+        "prepared_completion_scope": None,
         "completion_scope": None,
         "risks": [],
         "blocked": None,
@@ -2123,6 +2166,7 @@ def apply_marker(
                 set_status(state, EXECUTING, marker, detail)
                 schedule_executor(state, run_path, "repair")
         elif marker == "FINAL_ACCEPT":
+            state["prepared_completion_scope"] = None
             set_status(state, AWAITING_FINAL_APPROVAL, marker, detail)
             set_expectation(state, run_path, "human_final")
         elif marker == "FINAL_REJECT":
@@ -2145,12 +2189,65 @@ def apply_marker(
         return state
 
 
+def prepare_final_scope(
+    run_dir: str | Path,
+    completion_scope: Any,
+    request_id: str | None = None,
+    request_hash: str | None = None,
+) -> dict[str, Any]:
+    run_path, run_real = validate_run_path(run_dir, require_state=True)
+    with state_lock(run_path):
+        state = _load_state_unlocked(run_path, run_real)
+        expected = state.get("expected") or {}
+        if (
+            state["status"] != AWAITING_FINAL_APPROVAL
+            or expected.get("role") != "human_final"
+        ):
+            raise StateError(
+                f"preparing final scope requires {AWAITING_FINAL_APPROVAL} and human_final"
+            )
+        if not approved_plan_is_current(run_path, state):
+            restart_planning(
+                state,
+                run_path,
+                "APPROVED_PLAN_CHANGED",
+                "approved plan changed before checkpoint B scope preparation",
+            )
+        elif not subject_is_current(
+            run_path, state, "human_final", expected.get("subject")
+        ):
+            restart_verification(
+                state,
+                run_path,
+                "FINAL_EVIDENCE_CHANGED",
+                "delivery or final evidence changed before checkpoint B scope preparation",
+            )
+        else:
+            completion = validate_completion_input(completion_scope)
+            final = expected.get("subject") or {}
+            state["prepared_completion_scope"] = {
+                "prepared_at": utc_now(),
+                "scope": completion,
+                "scope_sha256": sha256_json(completion),
+                "final_subject_sha256": final.get("sha256"),
+            }
+            record_history(
+                state,
+                "PREPARE_FINAL_SCOPE",
+                state["status"],
+                state["status"],
+                state["prepared_completion_scope"]["scope_sha256"],
+            )
+        record_processed_request(state, request_id, "prepare_final", request_hash)
+        save_state_unlocked(run_path, state)
+        return state
+
+
 def confirm_checkpoint(
     run_dir: str | Path,
     checkpoint: str,
     decision: str,
     detail: str = "",
-    completion_scope: Any = None,
     request_id: str | None = None,
     request_hash: str | None = None,
 ) -> dict[str, Any]:
@@ -2160,10 +2257,6 @@ def confirm_checkpoint(
     decision = decision.lower()
     if decision == "revise" and not detail.strip():
         raise StateError("revision decisions require specific user feedback")
-    if completion_scope is not None and not (
-        checkpoint == "final" and decision == "approve"
-    ):
-        raise StateError("completion_scope is allowed only for final approval")
     run_path, run_real = validate_run_path(run_dir, require_state=True)
     with state_lock(run_path):
         state = _load_state_unlocked(run_path, run_real)
@@ -2224,7 +2317,13 @@ def confirm_checkpoint(
                         "delivery or final evidence changed before checkpoint B",
                     )
                 else:
-                    completion = validate_completion_input(completion_scope)
+                    prepared = state.get("prepared_completion_scope")
+                    if prepared is None:
+                        raise StateError(
+                            "final approval requires a prepared completion scope"
+                        )
+                    validate_prepared_completion_scope(state, prepared)
+                    completion = prepared["scope"]
                     approved = state["approved_plan_subject"] or {}
                     verified = state["verified_subject"] or {}
                     final = expected.get("subject") or {}
@@ -2242,6 +2341,7 @@ def confirm_checkpoint(
                         "verified_subject_sha256": verified.get("sha256"),
                         "final_subject_sha256": final.get("sha256"),
                     }
+                    state["prepared_completion_scope"] = None
                     set_status(state, DONE, "USER_APPROVED_FINAL", detail)
                     set_expectation(state, run_path, None)
             else:
@@ -2508,6 +2608,18 @@ def resume_run(
 
 def state_summary(state: dict[str, Any]) -> dict[str, Any]:
     expected = state.get("expected")
+    completion = state.get("completion_scope") or {}
+    prepared = state.get("prepared_completion_scope") or {}
+    final_subject_value = (
+        (expected or {}).get("subject")
+        if (expected or {}).get("role") == "human_final"
+        else None
+    ) or {}
+    final_subject_sha256 = (
+        final_subject_value.get("sha256")
+        or completion.get("final_subject_sha256")
+        or prepared.get("final_subject_sha256")
+    )
     risk_counts = {
         status: sum(1 for item in state["risks"] if item["status"] == status)
         for status in sorted(RISK_STATUSES)
@@ -2517,6 +2629,7 @@ def state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "run_dir": state["run_dir"],
         "status": state["status"],
         "delivery": state["delivery"],
+        "canonical_output_path": state["delivery"]["output_path_real"],
         "planning_round": state["planning_round"],
         "planning_cycle": state["planning_cycle"],
         "verification_round": state["verification_round"],
@@ -2530,6 +2643,15 @@ def state_summary(state: dict[str, Any]) -> dict[str, Any]:
         "last_marker": state["last_marker"],
         "approved_plan_subject": state["approved_plan_subject"],
         "verified_subject": state["verified_subject"],
+        "evidence_hashes": {
+            "approved_plan_sha256": (state.get("approved_plan_subject") or {}).get(
+                "sha256"
+            ),
+            "verified_delivery_and_reports_sha256": (
+                state.get("verified_subject") or {}
+            ).get("sha256"),
+            "final_review_and_risk_log_sha256": final_subject_sha256,
+        },
         "expected": (
             None
             if expected is None
@@ -2547,6 +2669,7 @@ def state_summary(state: dict[str, Any]) -> dict[str, Any]:
             {"id": item["id"], "status": item["status"], "text": item["text"]}
             for item in state["risks"]
         ],
+        "prepared_completion_scope": state["prepared_completion_scope"],
         "completion_scope": state["completion_scope"],
         "blocked": state["blocked"],
     }
@@ -2662,6 +2785,7 @@ def process_request(workspace: Path, request: dict[str, Any]) -> dict[str, Any]:
         "show",
         "start",
         "marker",
+        "prepare_final",
         "confirm",
         "set_delivery",
         "risk",
@@ -2697,18 +2821,28 @@ def process_request(workspace: Path, request: dict[str, Any]) -> dict[str, Any]:
             request_id=request_id,
             request_hash=request_hash,
         )
+    elif command == "prepare_final":
+        require_request_fields(
+            request,
+            {"request_id", "command", "run_id", "completion_scope"},
+        )
+        state = prepare_final_scope(
+            run_dir,
+            request["completion_scope"],
+            request_id=request_id,
+            request_hash=request_hash,
+        )
     elif command == "confirm":
         require_request_fields(
             request,
             {"request_id", "command", "run_id", "checkpoint", "decision"},
-            {"detail", "completion_scope"},
+            {"detail"},
         )
         state = confirm_checkpoint(
             run_dir,
             request["checkpoint"],
             request["decision"],
             request.get("detail", ""),
-            completion_scope=request.get("completion_scope"),
             request_id=request_id,
             request_hash=request_hash,
         )

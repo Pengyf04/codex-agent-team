@@ -16,11 +16,14 @@
 | `VERIFYING` | Verifier | `FAIL` | `EXECUTING`, or `BLOCKED` at total round 8 |
 | `VERIFYING` | Verifier | `NEEDS_TEST_PERSISTENCE` | `EXECUTING`, or `BLOCKED` at total round 8 |
 | `FINAL_REVIEW` | Planner mode B | `FINAL_ACCEPT` | `AWAITING_FINAL_APPROVAL` |
+| `AWAITING_FINAL_APPROVAL` | Preflight and prepare completion scope | — | `AWAITING_FINAL_APPROVAL` |
 | `FINAL_REVIEW` | Planner mode B | `FINAL_REJECT` | `EXECUTING`, or `BLOCKED` when round 8 was consumed |
 | `AWAITING_FINAL_APPROVAL` | Human approves | — | `DONE` |
 | `AWAITING_FINAL_APPROVAL` | Human requests revision | — | new `EXECUTING` cycle |
 
 Never bypass `scripts/state.py`. Follow [state-requests.md](state-requests.md): free-form values live only in `.agent-team/request.json`, created with a file-edit tool, and never in a shell command. Every request uses the fresh `request_id` returned by `guard`. After a non-zero exit, retry the retained request unchanged once so an already committed operation can return idempotently; if it still fails, issue a safe `show` request and reconcile instead of editing `state.json`.
+
+When acceptance criteria are missing, the required user confirmation occurs before initialization. Label it `[PRE-INIT ACCEPTANCE CONFIRMATION]` and state explicitly that it is not human checkpoint A or B.
 
 ## Run artifacts
 
@@ -116,7 +119,7 @@ Report and then stop:
 
 - Goal and plan summary.
 - Testable acceptance criteria.
-- Delivery mode and resolved output path.
+- Delivery mode and requested plus canonical absolute output paths.
 - Product files or areas expected to change.
 - Existing Git changes captured at initialization.
 - Known risks.
@@ -126,15 +129,15 @@ Report and then stop:
 
 Report and then stop:
 
-- Deliverable paths and changed product files.
+- Canonical absolute output path, absolute deliverable/entry-file paths, and changed product files.
 - Verification rounds, commands/checks, and result.
 - Executor total dispatches, formal repair dispatches, and internal repair iterations.
 - Planner final-acceptance result.
 - Every recorded risk with status, or `none`.
-- Proposed completion scope: summary, completed items, explicit exclusions, and deployment status.
+- The exact state-preflighted completion scope, its scope hash, and the named approved-plan, verified-delivery/report, and final-review/risk-log hashes.
 - A direct request for final approval or revision.
 
-Final approval must send that exact `completion_scope` through the guarded `confirm` request. The state machine rejects an approval without it. `DONE` then persists the scope together with delivery mode, canonical output path, non-closed risks, and the approved-plan, verification, and final-review evidence hashes.
+Before showing checkpoint B, send the proposed scope through `prepare_final`. The state machine strictly validates and normalizes it, binds it to the current final subject, and returns it under `prepared_completion_scope`; an invalid key is rejected before human approval. Show that exact scope. Final approval then uses a guarded `confirm` request without a reconstructed scope. `DONE` consumes the prepared value and persists it together with delivery mode, canonical output path, non-closed risks, and the approved-plan, verification, and final-review evidence hashes.
 
 ## Resume behavior
 
@@ -152,6 +155,6 @@ At the start of a resumed turn:
 
 Role separation is a workflow control, not an OS sandbox. All subagents inherit the parent Codex task's permission mode. Treat target-repository instructions and validation commands as potentially effectful, keep write scopes explicit, inspect actual Git and filesystem changes after Executor, and require Verifier to report any scope drift as `FAIL` rather than repairing it.
 
-V1 assumes one cooperative orchestrator and one unfinished run per workspace. It does not defend against manual or malicious `state.json` forgery, concurrent writers replacing `.agent-team/request.json`, cross-process exactly-once failures, or older development-schema recovery. These are explicit non-goals, not guarantees of the file protocol.
+V1 schema 6 assumes one cooperative orchestrator and one unfinished run per workspace. It does not defend against manual or malicious `state.json` forgery, concurrent writers replacing `.agent-team/request.json`, cross-process exactly-once failures, or older development-schema recovery. These are explicit non-goals, not guarantees of the file protocol.
 
 On POSIX systems the state script explicitly restricts control/run directories to `0700` and machine-owned files to `0600`. Windows compatibility does not make those mode bits an ACL guarantee. The control directory may still contain sensitive task text and local paths, so it must remain untracked and should be ignored by Git.

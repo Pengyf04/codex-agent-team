@@ -21,7 +21,7 @@ Use `scripts/state.py` for every state transition. Resolve it relative to this `
 ## Initialize or resume
 
 1. If the user is resuming, identify the named `run_id`, issue a safe `show` request, and continue only from the recorded status and `expected` role.
-2. For a new run, require a concrete task and at least one explicitly approved, testable acceptance criterion. If the user did not provide criteria, propose them and ask for approval before initializing the run.
+2. For a new run, require a concrete task and at least one explicitly approved, testable acceptance criterion. If the user did not provide criteria, present `[PRE-INIT ACCEPTANCE CONFIRMATION]`, explicitly state that it is an initialization prerequisite rather than checkpoint A or B, propose the criteria, and ask for approval before initializing the run.
 3. Propose one delivery mode and record it during initialization:
    - `workspace`: modify an existing target project in place.
    - `staged`: create a standalone artifact under the run's `deliverable/` directory.
@@ -47,14 +47,15 @@ Use `scripts/state.py` for every state transition. Resolve it relative to this `
 ## Run the state machine
 
 1. **Planning loop:** dispatch Planner mode A, then Plan Reviewer. Repeat on `NEEDS_REVISION`. The script blocks after five unresolved review rounds.
-2. **Human checkpoint A:** on `APPROVED`, summarize the final plan, acceptance criteria, delivery mode, requested and canonical output paths, expected product-file write scope, known risks, and existing Git changes. Stop the turn and wait for explicit approval. Do not dispatch Executor yet. The state script binds approval to the reviewed plan and delivery snapshot; never bypass a mismatch.
+2. **Human checkpoint A:** on `APPROVED`, summarize the final plan, acceptance criteria, delivery mode, requested and canonical absolute output paths, expected product-file write scope, known risks, and existing Git changes. Never present only `deliverable/` or another relative path. Stop the turn and wait for explicit approval. Do not dispatch Executor yet. The state script binds approval to the reviewed plan and delivery snapshot; never bypass a mismatch.
 3. **Execution loop:** after plan approval, dispatch Executor mode A. On `EXECUTION_DONE`, dispatch Verifier. On `FAIL` or `NEEDS_TEST_PERSISTENCE`, dispatch Executor mode B with the verification report and pending test IDs, then verify again. Each verification cycle has at most eight complete Verifier rounds, including persistence returns and rounds followed by Planner `FINAL_REJECT`.
 4. **Final acceptance:** on `PASS`, dispatch Planner mode B. On `FINAL_REJECT`, return to Executor mode B. On `FINAL_ACCEPT`, enter checkpoint B.
-5. **Human checkpoint B:** summarize deliverables, verification evidence, Executor dispatch/repair/internal-iteration counts, final acceptance, and every risk with status. Propose an explicit `completion_scope` containing a summary, non-empty completed items, explicit exclusions, and deployment status. Stop the turn and wait for explicit approval. The state script binds approval to the verified delivery and final evidence; any later change requires a revision cycle.
-6. **Completion:** after final approval, send the exact approved `completion_scope` in the final `confirm` request. The state script rejects missing scope and persists canonical delivery information, all non-closed risk IDs, and evidence hashes with `DONE`. Summarize completed and excluded scope, location, verification, execution counts, decisions, and risks; state `none` when no risks exist.
+5. **Human checkpoint B:** draft an explicit `completion_scope` containing a summary, non-empty completed items, explicit exclusions, and deployment status, then submit it through a guarded `prepare_final` request before asking the user. If preflight rejects it, correct the request before showing checkpoint B; never ask the user to approve an unvalidated scope. On success, summarize deliverables, verification evidence, Executor dispatch/repair/internal-iteration counts, final acceptance, and every risk with status. Display the exact returned `prepared_completion_scope.scope`, its scope hash, `canonical_output_path`, and the named evidence hashes. Show absolute deliverable and entry-file paths; never present only `deliverable/` or another relative path. Stop the turn and wait for explicit approval. Any later delivery or evidence change invalidates the prepared scope and requires a revision cycle.
+6. **Completion:** after final approval, send a final `confirm` request without reconstructing or resending `completion_scope`; the state script consumes the exact prepared scope, persists canonical delivery information, all non-closed risk IDs, and the three named evidence hashes with `DONE`, and clears the preview. Summarize completed and excluded scope, absolute location, verification, execution counts, decisions, and risks; state `none` when no risks exist.
 
 ## Human checkpoints
 
+- The pre-initialization acceptance confirmation is a prerequisite to creating a run and is not checkpoint A or B.
 - Never infer approval from silence, a previous message, or a subagent result.
 - Record checkpoint decisions only after the user explicitly approves or requests revision.
 - A revision at checkpoint A starts a new planning cycle. A revision at checkpoint B starts a new verification cycle.

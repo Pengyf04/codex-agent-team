@@ -12,7 +12,7 @@ No MCP Server or separate `.codex/agents/*.toml` installation is required.
 Planner <-> Plan Reviewer -> Human checkpoint A
                                   |
                                   v
-Executor <-> Verifier -> Planner Final -> Human checkpoint B -> DONE
+Executor <-> Verifier -> Planner Final -> Prepare final scope -> Human checkpoint B -> DONE
 ```
 
 - **Planner** defines scope, write boundaries, tests, risks, and recovery.
@@ -39,6 +39,8 @@ The state machine enforces:
 - test persistence before critical ad hoc evidence can support `PASS` or risk closure;
 - stable risk IDs and immutable lifecycle history;
 - separate Executor dispatch, repair-dispatch, and internal-repair counters;
+- strict preflight and final-evidence binding of the completion scope before checkpoint B;
+- canonical absolute output paths and separately named plan, verification, and final-review evidence hashes in every state summary;
 - explicit completed, excluded, deployment, and residual-risk scope at `DONE`.
 
 ## Delivery modes

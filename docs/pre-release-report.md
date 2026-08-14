@@ -8,6 +8,36 @@ candidate push.
 Status at capture: **local release candidate passed; public candidate publication
 was authorized, but a version tag and GitHub Release were not authorized**.
 
+## Post-monitor optimization addendum (2026-08-14)
+
+A real new-task Agent Team run subsequently completed the full Planner, Plan
+Reviewer, Executor, Verifier, repair, Planner Final, and two-checkpoint flow. That
+run exposed a checkpoint-B typo (`exclusions` instead of `excluded`) only after
+human approval, relative-only delivery links, and ambiguous pre-initialization
+confirmation wording.
+
+The current local candidate addresses those findings with state schema 6:
+
+- `prepare_final` strictly validates, normalizes, hashes, and binds the proposed
+  completion scope before checkpoint B is shown. Final approval consumes the
+  prepared value rather than rebuilding it.
+- Every state summary exposes the canonical absolute output path and separately
+  named approved-plan, verified-delivery/report, and final-review/risk-log hashes.
+- Skill and protocol text require absolute checkpoint/final paths and label missing
+  acceptance-criteria approval as `[PRE-INIT ACCEPTANCE CONFIRMATION]`, explicitly
+  outside checkpoints A and B.
+- Formal regressions cover misspelled fields, re-preparation, final-evidence drift,
+  block/resume continuity, the complete guarded CLI path, and `DONE` persistence.
+
+Local validation for this addendum passed: repository validation across 33 files,
+97 unittest cases, Ruff check/format, Mypy strict, Bandit, the OpenAI Skill and
+Plugin validators pinned by CI, and the isolated local Marketplace install,
+installed-state update, cache-parity, removal, reinstall, and cleanup smoke.
+
+The schema 6 addendum was validated locally before publication. A fresh host task
+using the published schema 6 package and the public-Git install/upgrade path remain
+release-candidate gates. No tag or GitHub Release is authorized by this addendum.
+
 ## Completed scope
 
 - Public Codex Plugin manifest, local Marketplace manifest, embedded `$agent-team`
@@ -51,10 +81,11 @@ Two findings were closed only after they became standard regression evidence:
 
 These items are deliberately not counted as completed:
 
-1. The current task capability snapshot does not provide a structured-mention
-   activation receipt for `codex-agent-team:agent-team`. Installed/enabled state,
-   cache parity, or a fail-closed raw-prompt guard is not evidence that a new task
-   loaded and executed the complete four-role workflow.
+1. A structured Skill mention and complete four-role run now exist for the schema
+   5 public candidate that produced the monitoring findings. The locally modified
+   schema 6 package still needs its own fresh-task activation and workflow receipt;
+   isolated install/cache parity and CLI state tests do not substitute for that
+   host evidence.
 2. Linux and experimental Windows jobs must be confirmed from the GitHub Actions
    run triggered by the first public push. Green supported-platform results are
    required before a release tag is created.

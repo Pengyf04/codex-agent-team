@@ -91,7 +91,7 @@ $agent-team Add optimistic locking to the order update flow. Preserve existing A
 
 In the ChatGPT desktop app, you can also type `@` and select **Agent Team** from installed plugins. In an interactive Codex CLI session, type `$` and select `agent-team` from autocomplete. Selecting the mention is more reliable than passing the same characters as unstructured text through a non-interactive wrapper, especially when the host has a very large Skill catalog.
 
-The Skill does not implicitly activate for ordinary tasks. If acceptance criteria or a material delivery decision is missing, the orchestrator asks before starting.
+The Skill does not implicitly activate for ordinary tasks. If acceptance criteria or a material delivery decision is missing, the orchestrator labels the request `[PRE-INIT ACCEPTANCE CONFIRMATION]` and asks before starting. This prerequisite is not human checkpoint A or B.
 
 For environments with very large Skill catalogs, the optional [fail-closed invocation guard](docs/explicit-invocation-guard.md) prevents an explicit Agent Team request from silently falling back when the canonical Skill was not exposed. The guard detects and stops; it does not modify the Codex host or force-load a missing Skill.
 
@@ -100,7 +100,7 @@ For environments with very large Skill catalogs, the optional [fail-closed invoc
 After Planner and Plan Reviewer agree, Codex shows:
 
 - The approved plan and acceptance criteria.
-- Delivery mode plus requested and canonical output paths.
+- Delivery mode plus requested and canonical absolute output paths.
 - Expected write scope.
 - Existing Git changes and known risks.
 
@@ -110,14 +110,14 @@ No Executor work starts until the user explicitly approves.
 
 After verification and independent final acceptance, Codex shows:
 
-- Deliverable and changed-file locations.
+- Canonical absolute output path plus absolute deliverable, entry-file, and changed-file locations.
 - Verification commands and evidence.
 - Executor dispatch, formal-repair, and internal-repair counts.
 - Final-acceptance result.
 - Every recorded risk and current status, or `none`.
-- The completed items, explicit exclusions, and deployment status that will be recorded in `DONE`.
+- The state-preflighted completed items, explicit exclusions, and deployment status that will be recorded in `DONE`, together with their scope hash and clearly named evidence hashes.
 
-The run is marked complete only after explicit approval of that `completion_scope`; the state machine rejects a final approval that omits it.
+Before showing checkpoint B, Codex sends the proposed `completion_scope` through the state machine's strict `prepare_final` preflight. Misspelled or unknown fields are rejected before the user is asked. The run is marked complete only after explicit approval of the exact prepared scope; final confirmation consumes that stored value instead of rebuilding it.
 
 ## Delivery modes
 
@@ -148,7 +148,7 @@ Each run creates:
 └── deliverable/        # staged mode only
 ```
 
-The orchestrator uses a guarded `.agent-team/request.json` placeholder for each state operation. `state.py guard` applies private local permissions, creates or reuses that placeholder, and returns a fresh `request_id`; every successful operation, including `show`, binds the ID to the complete JSON payload digest in `state.json` and then removes the request file. Only an exact retained request is idempotent, and a different payload cannot reuse its ID. Free-form task text, feedback, risks, and marker details are written as JSON with a file-edit tool and are never interpolated into shell commands. Structured Verifier `test_evidence` prevents a critical one-off test from supporting `PASS`: the workflow returns `NEEDS_TEST_PERSISTENCE` until Executor persists it and Verifier reruns the same evidence ID through a standard command. `risk_update` mitigates, closes, or reopens risks without deleting their history. State also records the three Executor counters and requires explicit completion scope at final approval. The checkpoint-A plan remains bound through execution; `PASS` freezes delivery content, `deliverables.md`, and `verify-report.md`; checkpoint B also binds final-review and risk evidence. `DONE` is terminal and is never reactivated by later artifact drift.
+The orchestrator uses a guarded `.agent-team/request.json` placeholder for each state operation. `state.py guard` applies private local permissions, creates or reuses that placeholder, and returns a fresh `request_id`; every successful operation, including `show`, binds the ID to the complete JSON payload digest in `state.json` and then removes the request file. Only an exact retained request is idempotent, and a different payload cannot reuse its ID. Free-form task text, feedback, risks, and marker details are written as JSON with a file-edit tool and are never interpolated into shell commands. Structured Verifier `test_evidence` prevents a critical one-off test from supporting `PASS`: the workflow returns `NEEDS_TEST_PERSISTENCE` until Executor persists it and Verifier reruns the same evidence ID through a standard command. `risk_update` mitigates, closes, or reopens risks without deleting their history. State also records the three Executor counters, exposes the canonical absolute output path and clearly named evidence hashes, and preflights the final completion scope before human approval. The checkpoint-A plan remains bound through execution; `PASS` freezes delivery content, `deliverables.md`, and `verify-report.md`; checkpoint B also binds final-review and risk evidence. `DONE` is terminal and is never reactivated by later artifact drift.
 
 Add `.agent-team/` to the target project's ignore rules. The Skill warns when it is not ignored, refuses to run when it is already tracked, and never edits `.gitignore` automatically. Records are retained by default; they may contain task text, evidence, risks, staged output, and local absolute paths. See [Security and privacy](docs/security-and-privacy.md) before using the Plugin with sensitive work.
 

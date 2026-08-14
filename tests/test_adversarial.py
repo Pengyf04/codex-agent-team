@@ -161,6 +161,12 @@ class AgentTeamAdversarialTests(unittest.TestCase):
             "deployment_status": "not_deployed",
         }
 
+    def prepare_and_confirm_final(self, run_dir: Path) -> dict[str, Any]:
+        state.prepare_final_scope(run_dir, self.completion_scope())
+        return cast(
+            dict[str, Any], state.confirm_checkpoint(run_dir, "final", "approve")
+        )
+
     def evidence_record(
         self, evidence_id: str, *, kind: str, risk_ids: list[str] | None = None
     ) -> dict[str, Any]:
@@ -282,15 +288,40 @@ class AgentTeamAdversarialTests(unittest.TestCase):
         self.apply_expected_marker(run_dir, "EXECUTION_DONE")
         self.apply_expected_marker(run_dir, "PASS")
         self.apply_expected_marker(run_dir, "FINAL_ACCEPT")
+        state.prepare_final_scope(run_dir, self.completion_scope())
         deliverable.write_text("replaced after final review\n", encoding="utf-8")
 
-        recovered = state.confirm_checkpoint(
-            run_dir, "final", "approve", completion_scope=self.completion_scope()
-        )
+        recovered = state.confirm_checkpoint(run_dir, "final", "approve")
 
         self.assertEqual(recovered["status"], state.EXECUTING)
         self.assertEqual(recovered["expected"]["role"], "executor")
         self.assertEqual(recovered["verification_cycle"], 2)
+        self.assertIsNone(recovered["prepared_completion_scope"])
+
+    def test_final_confirm_rejects_reconstructed_scope_field(self) -> None:
+        workspace = self.root / "final-confirm-workspace"
+        run_dir = self.initialize(workspace)
+        self.advance_to_execution(run_dir)
+        self.apply_expected_marker(run_dir, "EXECUTION_DONE")
+        self.apply_expected_marker(run_dir, "PASS")
+        self.apply_expected_marker(run_dir, "FINAL_ACCEPT")
+        state.prepare_final_scope(run_dir, self.completion_scope())
+
+        with self.assertRaisesRegex(state.StateError, "unknown fields"):
+            state.process_request(
+                workspace,
+                self.request_payload(
+                    command="confirm",
+                    run_id=run_dir.name,
+                    checkpoint="final",
+                    decision="approve",
+                    completion_scope=self.completion_scope(),
+                ),
+            )
+
+        current = state.load_state(run_dir)
+        self.assertEqual(current["status"], state.AWAITING_FINAL_APPROVAL)
+        self.assertIsNotNone(current["prepared_completion_scope"])
 
     def test_plan_change_after_approval_forces_replanning(self) -> None:
         run_dir = self.initialize(mode="staged")
@@ -321,6 +352,7 @@ class AgentTeamAdversarialTests(unittest.TestCase):
 
         self.assertEqual(recovered["status"], state.EXECUTING)
         self.assertEqual(recovered["expected"]["role"], "executor")
+        self.assertIsNone(recovered["prepared_completion_scope"])
         self.assertEqual(recovered["verification_cycle"], 2)
 
     def test_staged_control_named_directory_is_part_of_delivery_snapshot(self) -> None:
@@ -332,14 +364,14 @@ class AgentTeamAdversarialTests(unittest.TestCase):
         self.apply_expected_marker(run_dir, "EXECUTION_DONE")
         self.apply_expected_marker(run_dir, "PASS")
         self.apply_expected_marker(run_dir, "FINAL_ACCEPT")
+        state.prepare_final_scope(run_dir, self.completion_scope())
         hidden.write_text("changed after review\n", encoding="utf-8")
 
-        recovered = state.confirm_checkpoint(
-            run_dir, "final", "approve", completion_scope=self.completion_scope()
-        )
+        recovered = state.confirm_checkpoint(run_dir, "final", "approve")
 
         self.assertEqual(recovered["status"], state.EXECUTING)
         self.assertEqual(recovered["expected"]["role"], "executor")
+        self.assertIsNone(recovered["prepared_completion_scope"])
 
     def test_delivery_cannot_change_between_verifier_and_final_review(self) -> None:
         run_dir = self.initialize(mode="staged")
@@ -767,13 +799,22 @@ class AgentTeamAdversarialTests(unittest.TestCase):
             if role == "verifier":
                 payload["test_evidence"] = []
             request(payload)
+        prepared = request(
+            {
+                "command": "prepare_final",
+                "run_id": run_id,
+                "completion_scope": self.completion_scope(),
+            }
+        )
+        self.assertEqual(
+            prepared["prepared_completion_scope"]["scope"], self.completion_scope()
+        )
         final = request(
             {
                 "command": "confirm",
                 "run_id": run_id,
                 "checkpoint": "final",
                 "decision": "approve",
-                "completion_scope": self.completion_scope(),
             }
         )
 
@@ -1085,9 +1126,7 @@ class AgentTeamAdversarialTests(unittest.TestCase):
         self.apply_expected_marker(run_dir, "EXECUTION_DONE")
         self.apply_expected_marker(run_dir, "PASS")
         self.apply_expected_marker(run_dir, "FINAL_ACCEPT")
-        completed = state.confirm_checkpoint(
-            run_dir, "final", "approve", completion_scope=self.completion_scope()
-        )
+        completed = self.prepare_and_confirm_final(run_dir)
         self.assertEqual(completed["status"], state.DONE)
 
         (run_dir / "plan.md").write_text(

@@ -91,7 +91,7 @@ $agent-team 给订单更新流程增加乐观锁，保持现有 API 行为并补
 
 在 ChatGPT 桌面应用中，也可以输入 `@`，然后从已安装插件中选择 **Agent Team**；在交互式 Codex CLI 中，输入 `$` 后从自动补全中选择 `agent-team`。特别是本机安装了大量 Skill 时，从选择器选中比通过非交互包装器传入同样的普通文本更可靠。
 
-普通任务不会自动触发这个 Skill。如果缺少可判定的验收标准，或者交付位置涉及实质选择，主控会先向用户确认。
+普通任务不会自动触发这个 Skill。如果缺少可判定的验收标准，或者交付位置涉及实质选择，主控会用 `[PRE-INIT ACCEPTANCE CONFIRMATION]` 标记并在启动前向用户确认；这是初始化前置条件，不属于人工卡点 A 或 B。
 
 如果本机安装了大量 Skill，可选的[失败关闭调用守卫](docs/explicit-invocation-guard.md)能在 canonical Skill 未暴露时阻止显式 Agent Team 请求静默降级为普通流程。该守卫只负责检测并停止，不会修改 Codex 宿主，也不能强制加载缺失的 Skill。
 
@@ -100,7 +100,7 @@ $agent-team 给订单更新流程增加乐观锁，保持现有 API 行为并补
 Planner 和 Plan Reviewer 达成一致后，Codex 会展示：
 
 - 定稿方案和验收标准。
-- 交付模式、请求路径及 canonical 输出路径。
+- 交付模式、请求路径及 canonical 绝对输出路径。
 - 预计修改范围。
 - 初始化时已有的 Git 改动和已知风险。
 
@@ -110,14 +110,14 @@ Planner 和 Plan Reviewer 达成一致后，Codex 会展示：
 
 Verifier 通过且 Planner 完成独立终验后，Codex 会展示：
 
-- 交付物和实际改动文件。
+- canonical 绝对输出路径，以及交付物入口和实际改动文件的绝对路径。
 - 验证命令、检查项和证据。
 - Executor 总派发、正式回修和内部自修轮次。
 - 最终验收结论。
 - 全部已记录风险及当前状态；没有则明确写“无”。
-- 即将写入 `DONE` 的完成事项、明确排除事项和部署状态。
+- 已通过状态机预检、即将写入 `DONE` 的完成事项、明确排除事项和部署状态，以及范围哈希和含义清晰的证据哈希。
 
-只有用户最终确认上述 `completion_scope` 后，运行状态才会变为 `DONE`；缺少完成范围的批准会被状态机拒绝。
+在展示人工卡点 B 前，Codex 会先通过状态机的 `prepare_final` 严格预检 `completion_scope`；拼写错误或未知字段会在请求用户批准前被拒绝。只有用户确认这个已暂存的精确范围后，运行状态才会变为 `DONE`；最终确认直接消费暂存值，不再重新构造范围。
 
 ## 交付模式
 
@@ -148,7 +148,7 @@ V1 明确拒绝 `user_path`、`worktree` 和非空 `output_path`；`staged` 产�
 └── deliverable/        # 仅 staged 模式
 ```
 
-主控通过受保护的 `.agent-team/request.json` 占位文件执行每次状态操作。`state.py guard` 会收紧本地权限、创建或复用占位文件并返回新的 `request_id`；包括 `show` 在内的每个成功操作都会在 `state.json` 中把该 ID 绑定到完整 JSON payload 摘要，然后删除请求文件。因此只有完全相同的保留请求才是幂等重试，不同 payload 不能复用该 ID。任务文本、反馈、风险和 Marker detail 都由文件编辑工具写入 JSON，不会拼接进 Shell 命令。Verifier 的结构化 `test_evidence` 会阻止关键临时测试直接支撑 `PASS`：状态进入 `NEEDS_TEST_PERSISTENCE`，直到 Executor 固化测试且 Verifier 通过标准命令复验同一证据 ID。风险通过 `risk_update` 缓解、关闭或重新打开，原始风险和全部事件始终保留。状态机还保存 Executor 的三层轮次统计，并要求最终批准携带结构化完成范围。卡点 A 批准的计划贯穿执行阶段，`PASS` 冻结交付内容、`deliverables.md` 和 `verify-report.md`，卡点 B 继续绑定终验与风险材料；`DONE` 是终态，不会因后续材料漂移而被重新激活。
+主控通过受保护的 `.agent-team/request.json` 占位文件执行每次状态操作。`state.py guard` 会收紧本地权限、创建或复用占位文件并返回新的 `request_id`；包括 `show` 在内的每个成功操作都会在 `state.json` 中把该 ID 绑定到完整 JSON payload 摘要，然后删除请求文件。因此只有完全相同的保留请求才是幂等重试，不同 payload 不能复用该 ID。任务文本、反馈、风险和 Marker detail 都由文件编辑工具写入 JSON，不会拼接进 Shell 命令。Verifier 的结构化 `test_evidence` 会阻止关键临时测试直接支撑 `PASS`：状态进入 `NEEDS_TEST_PERSISTENCE`，直到 Executor 固化测试且 Verifier 通过标准命令复验同一证据 ID。风险通过 `risk_update` 缓解、关闭或重新打开，原始风险和全部事件始终保留。状态机还保存 Executor 的三层轮次统计，输出 canonical 绝对路径和含义明确的证据哈希，并在最终批准前预检结构化完成范围。卡点 A 批准的计划贯穿执行阶段，`PASS` 冻结交付内容、`deliverables.md` 和 `verify-report.md`，卡点 B 继续绑定终验与风险材料；`DONE` 是终态，不会因后续材料漂移而被重新激活。
 
 必须在目标项目的忽略规则中加入 `.agent-team/`。Skill 发现它未被忽略时会提醒，发现已经被 Git 跟踪时会拒绝运行，但不会自行修改 `.gitignore`。运行记录默认保留，可能包含任务文本、证据、风险、暂存交付物和本机绝对路径；处理敏感任务前请阅读[安全与隐私说明](docs/security-and-privacy.md)。
 
